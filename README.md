@@ -16,7 +16,7 @@ Also, PoisonFiber uses CreateToolhelp32Snapshot & standard Windows APIs to enume
 # Immoral Fiber 
 
 This repository contains two new offensive techniques using Windows Fibers:
-  - PoisonFiber (A remote enumeration & Fiber injection capability POC tool)
+  - PoisonFiber (The first remote enumeration & Fiber injection capability POC tool)
   - PhantomThread (An evolved callstack-masking implementation)
 
 It also contains an example test program that makes use of Windows Fibers which can be used to inject into with PoisonFiber:
@@ -46,7 +46,7 @@ The four sub-techniques it offers are:
   - Remote Dormant Fiber injection via overwriting existing Fiber code.
   - Remote Dormant Fiber injection via redirecting execution flow. 
   - Remote callback injection via overwriting default Fiber local storage cleanup callback.
-  - Remote callback injection via manipulating user-defined callbacks with malicious callback.
+  - Remote callback injection via manipulating user-defined callbacks with a malicious callback.
 
 ![PoisonFiber](Images/PoisonFiber.PNG)
 
@@ -59,15 +59,15 @@ The remaining techniques use the first piece as it allows normal program flow to
 
 ### Remote Dormant Fiber Injection
 
->NOTE: Both sub-techniques rely on the switching of Fibers to trigger shellcode execution so remember to switch execution between fibers in victim process (e.g. BasicFiber.exe) when testing.
+***NOTE**: Both sub-techniques rely on the switching of Fibers to trigger shellcode execution so remember to switch execution between fibers in victim process (e.g. BasicFiber.exe) when testing.*
 
-Fibers exist within the context of a Usermode Thread object & heap memory. Dormant Fibers are Fiber objects that are currently not switched to and thus not executing). If we can locate remote dormant Fiber objects, we can write shellcode at the address of which they will continue, thereby whenever the remote application naturally schedules the dormant Fiber (switches to it) this will trigger the execution of our injected code.
+Fibers exist within the context of a Usermode Thread object & Heap memory. Dormant Fibers are Fiber objects that are currently not switched to and thus not executing). If we can locate remote dormant Fiber objects, we can write shellcode at the address of which they will continue, thereby whenever the remote application naturally schedules the dormant Fiber (switches to it) this will trigger the execution of our injected code.
 
 But before injecting any shellcode PoisonFiber must first remotely enumerate all of the Dormant Fiber objects from memory. It does this using the following steps:
 1. Enumerate all running Threads on a host, checking the `TEB->SameTebFlags` to identify if the `HasFiberData` mask has been set.
-2. Remotely enumerate the heaps of all processes which have Threads that make use of Fibers.
-3. Calculate & collect individual heap blocks of a requested 0x530 bytes (our potential Dormant Fiber objects).
-4. Validate the potential dormant Fiber objects by generating expected FiberData field values based on a unique `XoredCookie` value inside each Fiber object.
+2. Remotely enumerate the Heaps of all processes which have Threads that make use of Fibers.
+3. Calculate & collect individual heap blocks of a requested `0x530` bytes (our potential Dormant Fiber objects).
+4. Validate the potential dormant Fiber objects by generating expected `FiberData` field values based on a unique `XoredCookie` value inside each Fiber object.
 
 Once completed PoisonFiber has valid list of dormant Fiber objects to choose from. As shown in the diagram below:
 ![DormantFibers](Images/DormantFibers.png)
@@ -80,11 +80,11 @@ Within a dormant Fiber object, we can find it's `CONTEXT` structure (the saved e
 
 Example command:  `PoisonFiber.exe -p 1234 -do`
 
-The first sub-technique records the resumption address by reading the first value on top of the dormant Fiber's stack. It then adds writable memory permissions & injects our malicious shellcode here providing enough space is available. Whenever the dormant Fiber is switched to naturally by the process the shellcode will be executed on our behalf instead of the legitimate Fiber code. 
+The first sub-technique records the resumption address by reading the first value on top of the Dormant Fiber's stack. It then adds writable memory permissions & injects our malicious shellcode here (providing enough space is available). Whenever the dormant Fiber is switched to naturally by the process the shellcode will be executed on our behalf instead of the legitimate Fiber code. 
 
 ![FiberOverwrite](Images/FiberOverwrite.png)
 
-*NOTE: As previously mentioned directly adding RWX memory permissions is rather crude, in real world scenarios you would change this to avoid detection, but here it doesn't matter since it the POC is just a demonstration. In addition, overwriting the legitimate Fiber code directly without restoring it afterwards will likely crash the injected process after the shellcode has finished executing.*
+*NOTE: As previously mentioned directly adding RWX memory permissions is rather crude, in real world scenarios you would change this to avoid detection, but here it doesn't matter since the POC is just a demonstration. In addition, overwriting the legitimate Fiber code directly without restoring it afterwards will likely crash the injected process after the shellcode has finished executing.*
 
 #### Dormant Fiber injection via redirecting execution flow. 
 
@@ -107,27 +107,27 @@ Advantages:
 Disadvantages:
 - The Thread enumeration component is potentially noisy to AVs.
 - Race conditions possible between injection & application switching fibers.
-- Execution subject to remote application Fiber switching.
+- Execution of shellcode is subject to remote application Fiber switching to it.
 - Overwriting will likely crash a process unless FiberData is restored after shellcode has finished executing.
-- Redirection still requires memory allocation for shellcode.
+- Redirection still requires memory allocation/availble space for shellcode.
 
 ### Remote Callback Injection
 
 Fiber local storage (FLS) is the fiber equivalent to Thread Local Storage (TLS). It allows fibers to store and retrieve values via an index. When allocating a new FLS index a callback function can also be defined. Callback functions are executed whenever the specific FLS index associated with it is freed or when the Fiber using that FLS is deleted. Pointers to callbacks are stored in a callback table.
 
 PoisonFiber first remotely enumerates the Fiber callback table from memory by:
-1. Collecting the `FlsData` field inside a remote Fiber object (First diagram below)
-2. Enumerating through a linked list of `FlsData` structs to find the `GLOBAL_FLS_DATA` ptr (second diagram)
-3. Identifies the remote callback table location from a field inside `GLOBAL_FLS_DATA` (second diagram)
+1. Collecting the `FlsData` field inside a remote Fiber object (first diagram below).
+2. Enumerating through a linked list of `FlsData` structs to find the `GLOBAL_FLS_DATA` ptr.
+3. Identifies the remote callback table location from a field inside `GLOBAL_FLS_DATA` (second diagram below).
 
 ![CallbackCollection1](Images/CallbackCollection1.png)  
 ![CallbackCollection2](Images/CallbackCollection2.png)
 
-#### Callback injection via overwriting default Fiber local storage cleanup callback
+#### Callback injection via overwriting the default Fiber local storage cleanup callback
 
 Example command `PoisonFiber.exe -p 1234 -cd`
 
-Once it has access the remote process Fiber callback table PoisonFiber can overwrite a default callback with a ptr to our shellcode. This will be triggered whenever the Fiber with FLS is deleted or the owning thread running Fibers exists. 
+Once the remote process Fiber callback table has been collected PoisonFiber can overwrite a default callback with a ptr to our shellcode. This will be triggered whenever the Fiber using FLS is deleted i.e. `DeleteFiber()` or the owning thread running it exits i.e. `ExitThread()`. 
 
 ![CallbackDefault](Images/CallbackDefault.png)
 
@@ -136,24 +136,24 @@ Once it has access the remote process Fiber callback table PoisonFiber can overw
 
 Example command `PoisonFiber.exe -p 1234 -cu`
 
-Alternatively, PoisonFiber can overwrite a user-defined FLS callback with a ptr to shellcode. The advantage of this method being it our shellcode will be cleaned up from memory for us & it may increase the likelihood of the shellcode being executed prior to the Fiber being deleted or the thread exiting, as the application may free the FLS index by its own accord. The downside of this technique is that it may introduce instability or undefined behaviour in the remote process after the shellcode has finished executing.
+Alternatively, PoisonFiber can overwrite a user-defined FLS callback with a ptr to shellcode. The advantages of this method being our shellcode will be cleaned up from memory by the remote process for us & it may increase the likelihood of the shellcode being executed prior to the Fiber being deleted or the thread exiting; providing the application frees the FLS index by its own accord. The downside of this technique is that it may introduce instability or undefined behaviour in the remote process after the shellcode has finished executing.
 
 ![CallbackUser](Images/CallbackUser.png)
 
 #### Callback Injection Advantages / Disadvantages
 Advantages:
-- Injected callback cleaned up automatically by Thread after execution.
+- Injected callback is cleaned up automatically by Thread after execution.
 
 Disadvantages:
 - Fiber Local Storage needs to already be in place.
-- One-time execution only (possible advantage).
-- Careful targeting when overwriting user-defined callbacks to not introduce crashes.
+- One-time execution only (a possible advantage).
+- Careful targeting is required when overwriting user-defined callbacks to not introduce crashes.
 
 #### PoisonFiber prerequisites
 
 - Victim process must be using Fibers already.  
 - Victim process must be using Fiber Local Storage if injecting via callbacks.  
-- PoisonFiber must have sufficient privileges to inject into remote process.  
+- PoisonFiber must have sufficient privileges to inject into the remote process.  
 
 
 ## PhantomThread
@@ -179,11 +179,11 @@ In addition, tools such as [**Weetabix**](https://github.com/JanielDary/weetabix
 
 #### PhantomThread overview
 
-PhantomThread removes the following indicators when the payload is sleeping thus limiting the ability of memory scanners to target Threads using Fibers:
+PhantomThread removes the following indicators when the payload is sleeping, thus limiting the ability of memory scanners to target Threads using Fibers:
 1. The `HasFiberData` mask inside the `TEB->SameTebFlags` field which indicates to the OS if a Thread is running as a Fiber.
-2. The start routine `RtlUserFiberStart()` which appears within callstack of Fibers created using `CreateFiber()` API call. As mentioned above.
+2. The start routine `RtlUserFiberStart()` which appears within callstack of Fibers created using the `CreateFiber()` API call. As mentioned above.
 
-In addition, PhantomThread also masks the dormant Fiber (containing the malicious callstack) as well as the currently executing Fiber while the payload is sleeping. This is to prevent detection by tools that are able to enumerate not just the running Fiber's callstack but also dormant Fiber's callstacks found in Fiber Objects on the heap. It does this by temporarily patching the malicious Fiber with a legitimate dummy Fiber that has had its XoredCookie modified so it passes a sanity check inside `SwitchToFiber()` and can replace the malicious Fiber permanently if the attacker so desires.
+In addition, PhantomThread also masks the Dormant Fiber (containing the malicious callstack) as well as the currently executing Fiber while the payload is sleeping. This is to prevent detection by tools that are able to enumerate not just the running Fiber's callstack but also dormant Fiber's callstacks found in Fiber Objects on the heap. It does this by temporarily patching the malicious Fiber with a legitimate dummy Fiber that has had its `FiberObject.XoredCookie` modified so it passes a sanity check inside `SwitchToFiber()` and can replace the malicious Fiber permanently if the attacker so desires.
 
 Basic principle:  
 ![PhantomThreadMem](Images/PhantomThreadMem.png)
@@ -196,33 +196,33 @@ Basic principle:
 ###### Step 1. Setup & Removal of Fiber indicators
 
 **Fiber1** - *Clean Fiber*: 
-- Fiber1 is the initial Fiber created from the running Thread via `ConvertThreadToFiber()`. This maintains a callstack of the original Thread and does **NOT** contain any Fiber based start routines.
-- Patches the `TEB->SameTebFlags` field with a value to that of a Thread.
+- Fiber1 is the initial Fiber created from the running Thread via `ConvertThreadToFiber()`. This maintains a callstack of the original Thread and does **NOT** contain any Fiber start routines.
+- It patches the `TEB->SameTebFlags` field with a value to that of a Thread.
 - It creates a Dummy Fiber with a clean callstack.
-- Generates a valid `FiberObject.XoredCooke` value for the Dummy Fiber so it can run without causing an error.
-- Then switches execution to Fiber2. 
+- It generates a valid `FiberObject.XoredCooke` value for the Dummy Fiber so it can run without raising an exception.
+- It then switches execution to Fiber2. 
 
 ###### Step 2. Shellcode execution
 **Fiber2** -*Malicious Fiber*:
-- This executes from a DLL, which loads a resource within the DLL, inside the resource is some (harmless) shellcode. This is there to imitate malicious code of an attacker. 
+- This executes from a DLL, which loads a resource within the DLL, inside the resource is some (harmless) shellcode. This is here to imitate malicious code of an attacker. 
 - When Fiber2 has finished executing shellcode it waits for 10 seconds and then switches execution back to Fiber1.
 
 ###### Step 3. Masking Dormant Fiber with Dummy Fiber
 **Fiber1** - *Clean Fiber*:
-- When Fiber2 is not executing e.g. Imitating when beacon/payload goes into a sleep state. Then Fiber1 patches the Dummy Fiber in place of Fiber2. 
-- When the sleep has finished it patches back Fiber2 in place of the Dummy Fiber so execution can resume from Step2. 
+- When Fiber2 is not executing e.g. Imitating when beacon/payload goes into a `Sleep()` state. Then Fiber1 patches the Dummy Fiber in place of Fiber2. (*This protects it against tools that are able to enumerate Dormant Fibers on the Heap*).
+- When the `Sleep()` has finished it patches back Fiber2 in place of the Dummy Fiber so execution can resume from Step2. 
 - The whole point of using a Dummy Fiber patched in place of Fiber2 is to mask it from memory scanners that look to reveal dormant Fiber stacks in addition to currently executing Fibers running in the context of a Thread.
 
 
-***NOTE**: Phantom Thread also allows the option to trigger our malicious fiber once `.\PhantomThread.exe x` and replace it with our dummy Fiber permanently.*  
+***NOTE**: Phantom Thread also provides and example to trigger our malicious fiber only once `.\PhantomThread.exe x` and replace it with our dummy Fiber permanently afterwards. This is possible because PhantomThread genreates a new valid `XoredCooke` for the Dummy Fiber object to pass the sanity check inside of `SwitchToFiber()`*  
 
 #### Advantages / Disadvantages 
 
 Advantages: 
-- No Fiber Artefacts - Looks identical to a THREAD. Harder to target.
-- Valid Callstacks - Avoids using faked Callstacks.
-- Dormant Fiber masked in addition to running Fiber.
-- No sacrificial Threads/Fibers required.
+- No Fiber Artifacts - When in the masked state the primary Fiber looks identical to a Thread, which is harder to target without being peformance heavy.
+- Valid Callstacks - Masking avoids using faked callstacks unlike callstack spoofing. So callstack spoofing detection mechanisms are not applicable.
+- The Dormant Fiber is masked in addition to the running Fiber, thanks to using a Dummy Fiber object.
+- No sacrificial Threads/Fibers required, since it can be achieved within a single thread.
 
 Disadvantages:
 - Does not mask against inline callstack collection.
