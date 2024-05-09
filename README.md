@@ -1,3 +1,7 @@
+## BlackHat Asia 2024 Briefings
+
+https://www.blackhat.com/asia-24/briefings/schedule/index.html#immoral-fiber-unlocking--discovering-new-offensive-capabilities-of-fibers-37947
+
 #### Disclaimer
 **NOTE**: *These are POC techniques, they aren't intended to be used in real-life red-teaming scenarios. 
 Both POCs demonstrate the new techniques, but no attempt has been made to make the rest of POCs evasive. 
@@ -66,11 +70,11 @@ But before injecting any shellcode PoisonFiber must first remotely enumerate all
 4. Validate the potential dormant Fiber objects by generating expected FiberData field values based on a unique `XoredCookie` value inside each Fiber object.
 
 Once completed PoisonFiber has valid list of dormant Fiber objects to choose from. As shown in the diagram below:
-![DormantFibers](Images/DormantFibers.PNG)
+![DormantFibers](Images/DormantFibers.png)
 
-Within a dormant Fiber object, we can find it's `CONTEXT` structure (the saved execution state). The `CONTEXT’s` `RIP` will point to a `RET` which will essentially `POP` whatever is on top of the Fiber's stack and jump to it (when it is switched to from the currently running Fiber). Thus, the value at the top of a dormant Fiber's stack will contain the address at which to continue execution. This is illustrated below:
+Within a dormant Fiber object, we can find it's `CONTEXT` structure (the saved execution state). The `CONTEXTâ€™s` `RIP` will point to a `RET` which will essentially `POP` whatever is on top of the Fiber's stack and jump to it (when it is switched to from the currently running Fiber). Thus, the value at the top of a dormant Fiber's stack will contain the address at which to continue execution. This is illustrated below:
 
-![DormantFiberInjection](Images/DormantFiberInjection.PNG)
+![DormantFiberInjection](Images/DormantFiberInjection.png)
 
 #### Dormant Fiber injection via overwriting existing Fiber code.
 
@@ -78,7 +82,7 @@ Example command:  `PoisonFiber.exe -p 1234 -do`
 
 The first sub-technique records the resumption address by reading the first value on top of the dormant Fiber's stack. It then adds writable memory permissions & injects our malicious shellcode here providing enough space is available. Whenever the dormant Fiber is switched to naturally by the process the shellcode will be executed on our behalf instead of the legitimate Fiber code. 
 
-![FiberOverwrite](Images\FiberOverwrite.png)
+![FiberOverwrite](Images/FiberOverwrite.png)
 
 *NOTE: As previously mentioned directly adding RWX memory permissions is rather crude, in real world scenarios you would change this to avoid detection, but here it doesn't matter since it the POC is just a demonstration. In addition, overwriting the legitimate Fiber code directly without restoring it afterwards will likely crash the injected process after the shellcode has finished executing.*
 
@@ -88,9 +92,9 @@ Example command `PoisonFiber.exe -p 1234 -dr`
 
 For this sub-technique instead of overwriting the Fiber code, we allocate a new region of memory for our shellcode and push this address onto the dormant Fiber's stack. That way when a Fiber is switched to it will execute our new region of memory first (illustrated below).
 
-In addition, we aren’t corrupting the program memory, so providing our shellcode returns normally it will maintain the original execution of the remote process (without crashing) after executing our malicious code.
+In addition, we arenâ€™t corrupting the program memory, so providing our shellcode returns normally it will maintain the original execution of the remote process (without crashing) after executing our malicious code.
 
-![FiberRedirect](Images\FiberRedirect.png)
+![FiberRedirect](Images/FiberRedirect.png)
 
 
 #### Dormant Fiber Injection Advantages / Disadvantages
